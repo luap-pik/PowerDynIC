@@ -3,9 +3,13 @@ using PowerDynamics
 using Plots
 using DifferentialEquations
 
+# some additional functions that might develop into new PD.jl features
 include("PDpatches.jl")
 
+# custom node type
 include("components/ThirdOrderEq.jl")
+
+# load example system
 include("example_cases/BasinStabilityForPD/system.jl")
 
 powergrid = PowerGrid(node_list,line_list)

@@ -31,10 +31,11 @@ import PowerDynamics: dimension, symbolsof, construct_vertex
 import PowerDynamics: AbstractNode
 import Base: @__doc__
 
-@DynamicNode ThirdOrderEq(H, P, D, Ω, E_f,T_d_dash, X_d_dash, X_d) begin
+@DynamicNode ThirdOrderEq(H, P, D, Ω, E_f,T_d_dash, X_q_dash, X_d_dash, X_d) begin
     @assert H > 0 "inertia (H) should be >0"
     @assert D >= 0 "damping (D) should be >=0"
     @assert T_d_dash > 0 "time constant of d-axis (T_d_dash) should be >0"
+    @assert X_q_dash >= 0
     @assert X_d_dash >= 0 "transient reactance of d-axis (X_d_dash) should be >=0"
     @assert X_d >= 0 "reactance of d-axis (X_d_dash) should be >=0"
     Ω_H = Ω / (2 * H)
@@ -48,11 +49,14 @@ end [[θ,dθ],[ω, dω]] begin
     i_q = imag(i_c)
 
     dθ = ω
+    dω = (P - D * ω - p - (X_q_dash - X_d_dash) * i_d * i_q) * Ω_H
     de_q = (1 / T_d_dash) * (E_f - e_q + i_d * (X_d - X_d_dash))
-    de_c = 1im*de_q
-    
-    du = -1im * de_c * exp(1im * θ)+ u * 1im * ω
-    dω = (P - D * ω - p + (X_d_dash) * i_d * i_q) * Ω_H
+    # -> u = e_q * exp(1im * θ)
+    du = de_q * exp(1im * θ) + u * 1im * ω
+
+    #de_c = 1im*de_q
+    #du = -1im * de_c * exp(1im * θ)+ u * 1im * ω
+    #dω = (P - D * ω - p - (X_q_dash - X_d_dash) * i_d * i_q) * Ω_H
 end
 
 export ThirdOrderEq

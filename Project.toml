@@ -3,6 +3,9 @@ uuid = "fafbd8f5-d408-48f4-8830-e0e64285d3a0"
 authors = ["Paul Schultz"]
 version = "0.1.0"
 
+[deps]
+PowerDynamics = "cc46b21f-1b17-51c2-b642-af74c3d3a8be"
+
 [compat]
 julia = "1.3"
 

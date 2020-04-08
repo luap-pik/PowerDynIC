@@ -1,0 +1,13 @@
+name = "PowerDynIC"
+uuid = "fafbd8f5-d408-48f4-8830-e0e64285d3a0"
+authors = ["Paul Schultz"]
+version = "0.1.0"
+
+[compat]
+julia = "1.3"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

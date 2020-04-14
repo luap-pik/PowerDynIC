@@ -10,7 +10,7 @@ include("PDpatches.jl")
 include("components/ThirdOrderEq.jl")
 
 # load example system
-include("example_cases/BasinStabilityForPD/system.jl")
+include("../example_cases/BasinStabilityForPD/system.jl")
 
 powergrid = PowerGrid(node_list,line_list)
 rpg = rhs(powergrid)
@@ -151,7 +151,7 @@ using LinearAlgebra
 using Sundials
 
 # load example system
-include("example_cases/DAE_Solver_PD/system.jl")
+include("../example_cases/DAE_Solver_PD/system.jl")
 
 powergrid = PowerGrid(node_list,line_list)
 
@@ -195,15 +195,13 @@ sol = solve(dae, IDA(linear_solver=:GMRES), initializealg=BrownFullBasicInit())
 plot(PowerGridSolution(sol, powergrid), ω_idx, :ω, legend=false)
 plot(PowerGridSolution(sol, powergrid), :, :v, legend=false)
 
+perturb = Perturbation(2, :ω, Inc(31.))
+u0 = perturb(op_icm)
+du0 = similar(u0.vec)
 
-function sim_dae(rpg, u0)
-    du0 = similar(u0.vec)
-    dae = DAEProblem(rpg, du0, u0.vec, (0., 20.); differential_vars=diff_vars)
-    dqsol = solve(dae, IDA(linear_solver=:GMRES), initializealg=BrownFullBasicInit())
-    return PowerGridSolution(dqsol, powergrid)
-end
+dae = DAEProblem(rpg_dae, du0, u0.vec, (0., 100.); differential_vars=diff_vars)
+dqsol = solve(dae, IDA(linear_solver=:GMRES), initializealg=BrownFullBasicInit())
+pgsol = PowerGridSolution(dqsol, powergrid)
 
-perturb = Perturbation(2, :ω, Inc(100.))
-pgsol = sim_dae(rpg_dae, perturb(op_icm))
 plot(pgsol, ω_idx, :ω, legend=false)
 plot(pgsol, :, :v, legend=false)

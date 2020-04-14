@@ -144,3 +144,66 @@ end
 perturb = Perturbation(7, :ω, Inc(0.1))
 sol = sim(rpg, perturb(de_sp_op_icm))
 plot(sol, ω_idx, :ω, legend=false)
+
+## 7 investigate DAE formulation
+
+using LinearAlgebra
+using Sundials
+
+# load example system
+include("example_cases/DAE_Solver_PD/system.jl")
+
+powergrid = PowerGrid(node_list,line_list)
+
+state(vec) = State(powergrid, vec)
+ω_idx = findall(:ω .∈ symbolsof.(node_list))
+
+# ND.jl gives us an ODEFunction so we have to construct one manually
+rpg_ode = rhs(powergrid)
+
+function dae_form(res, du, u, p, t)
+    du_temp = similar(du)
+    rpg_ode.f(du_temp, u, p, t)
+    @. res = du - du_temp
+end
+
+# construct initial guess
+sl = node_list[1]
+guess(::Type{SlackAlgebraic}) = [sl.U, 0.] #[:u_r, :u_i]
+guess(::Type{PQAlgebraic}) = [sl.U, 0.] #[:u_r, :u_i]
+guess(::Type{ThirdOrderEq}) = [sl.U, 0., 0., 0.] #[:u_r, :u_i, :θ, :ω]
+type_guesses = node_list .|> typeof .|> guess
+icm = vcat(type_guesses...) |> state
+
+# find PD operation point
+op_icm = find_operationpoint(powergrid; ic_guess=icm.vec, tol=1E-10)
+
+u0 = op_icm.vec
+du0 = similar(u0)
+diff_vars = (diag(rpg_ode.mass_matrix) .== 1)
+p = nothing
+tspan = (0., 20.)
+
+rpg_dae = DAEFunction{true, true}(dae_form, syms=rpg_ode.syms)
+dae = DAEProblem(rpg_dae, du0, u0, tspan, p; differential_vars=diff_vars)
+
+#ToDO : test other solvers, e.g. IDA(linear_solver=:GMRES)
+# ShampineCollocationInit
+sol = solve(dae, IDA(linear_solver=:GMRES), initializealg=BrownFullBasicInit())
+
+# apparently, this doesn't run into a stable state
+plot(PowerGridSolution(sol, powergrid), ω_idx, :ω, legend=false)
+plot(PowerGridSolution(sol, powergrid), :, :v, legend=false)
+
+
+function sim_dae(rpg, u0)
+    du0 = similar(u0.vec)
+    dae = DAEProblem(rpg, du0, u0.vec, (0., 20.); differential_vars=diff_vars)
+    dqsol = solve(dae, IDA(linear_solver=:GMRES), initializealg=BrownFullBasicInit())
+    return PowerGridSolution(dqsol, powergrid)
+end
+
+perturb = Perturbation(2, :ω, Inc(100.))
+pgsol = sim_dae(rpg_dae, perturb(op_icm))
+plot(pgsol, ω_idx, :ω, legend=false)
+plot(pgsol, :, :v, legend=false)

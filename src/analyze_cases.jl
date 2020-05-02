@@ -2,7 +2,7 @@ using Revise
 using PowerDynamics
 using Plots
 using DifferentialEquations
-
+import PowerDynamics:rhs
 # some additional functions that might develop into new PD.jl features
 include("PDpatches.jl")
 
@@ -11,6 +11,10 @@ include("components/ThirdOrderEq.jl")
 
 # load example system
 include("../example_cases/BasinStabilityForPD/system.jl")
+
+function rhs(pg::PowerGrid)
+    network_dynamics(map(construct_vertex, pg.nodes), map(construct_edge, pg.lines), pg.graph)
+end
 
 powergrid = PowerGrid(node_list,line_list)
 rpg = rhs(powergrid)
@@ -118,6 +122,7 @@ end
 perturb = Perturbation(7, :ω, Inc(0.1))
 sol = sim(rpg, perturb(de_sp_op_icm))
 plot(sol, ω_idx, :ω, legend=false)
+
 
 # now try the case in test_basinstability
 # -> it gives dtmin error and stops

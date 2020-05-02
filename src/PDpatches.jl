@@ -1,9 +1,9 @@
 import PowerDynamics: rhs
-
+#=
 function rhs(pg::PowerGrid; parallel=false)
     network_dynamics(map(construct_vertex, pg.nodes), map(construct_edge, pg.lines), pg.graph; parallel=parallel)
 end
-
+=#
 import PowerDynamics: find_operationpoint
 using NLsolve: nlsolve, converged
 
@@ -110,4 +110,28 @@ function find_valid_initial_condition(pg::PowerGrid, ic_guess)
         println("Failed to find initial conditions on the constraint manifold!")
         println("Try running nlsolve with other options.")
     end
+end
+
+"""
+Makes an type specific initial guess to help the operation point search.
+The voltage is of all nodes is fixed to the voltage of the first SlackAlgebraic
+in the system. The other symbols are set to zero.
+Inputs:
+    pg: Power grid, a graph containg nodes and lines
+Outputs:
+    guess: Type specific initial guess
+"""
+function initial_guess(pg::PowerGrid)
+    if SlackAlgebraic ∉ pg.nodes .|> typeof
+        @warn "There is no slack bus in the system to balance powers."
+    end
+
+    sl = findfirst(SlackAlgebraic  ∈  pg.nodes .|> typeof)
+    slack = pg.nodes[sl]
+    guess(::Type{SlackAlgebraic}) = [slack.U, 0.]         #[:u_r, :u_i]
+    guess(::Type{PQAlgebraic}) = [slack.U, 0.]            #[:u_r, :u_i]
+    guess(::Type{ThirdOrderEq}) = [slack.U, 0., 0., 0.]   #[:u_r, :u_i, :θ, :ω]
+
+    type_guesses = pg.nodes .|> typeof .|> guess
+    icm = vcat(type_guesses...)
 end

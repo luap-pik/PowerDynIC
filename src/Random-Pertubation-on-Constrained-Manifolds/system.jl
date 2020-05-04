@@ -46,4 +46,5 @@ append!(node_list, [ThirdOrderEq(H = 3.318, P = 0.6337, D = 0.1, Ω = 50, E_f = 
 
 powergrid = PowerGrid(node_list, line_list)
 
-return powergrid
+# not outside function
+#return powergrid

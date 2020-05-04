@@ -6,9 +6,11 @@ import PowerDynamics:rhs
 using DifferentialEquations
 using LinearAlgebra
 using DiffEqCallbacks
-include("system.jl")
-include("/home/anna/Documents/MASTER_ARBEIT/PowerDynIC-master/src/PDpatches.jl")
-include("/home/anna/Documents/MASTER_ARBEIT/PowerDynIC-master/src/PDpatches.jl")
+
+folder = dirname(@__FILE__)
+include(folder*"/../components/ThirdOrderEq.jl")
+include(folder*"/system.jl")
+include(folder*"/../PDpatches.jl")
 
 """
 A method to find random pertubations in the case of systems with algebraic
@@ -21,10 +23,11 @@ Generator Methods which contain algebraic constraints.
 function RandPertWithConstrains(pg::PowerGrid, operationpoint,node, interval)
     g(θ,i,u) = [1im * i * exp(-1im * θ), 1im * u * exp(-1im * θ)] # Constraints
 
-    z = [operationpoint[node,:θ],operationpoint[node,:iabs],operationpoint[node,:v]]
+    # the angle is :φ not :θ
+    z = [operationpoint[node,:φ],operationpoint[node,:iabs],operationpoint[node,:v]]
 
-    Jacg_imag = ForwardDiff.jacobian(x -> imag(g(x[1],x[2],x[3])), z)
-    Jacg_real = ForwardDiff.jacobian(x -> real(g(x[1],x[2],x[3])), z)
+    Jacg_imag = ForwardDiff.jacobian(x -> imag(g(x...)), z)
+    Jacg_real = ForwardDiff.jacobian(x -> real(g(x...)), z)
 
     Jacg = Jacg_real + 1im .* Jacg_imag  # I could not find a package which is able to handle complex valued function
 
@@ -37,8 +40,9 @@ function RandPertWithConstrains(pg::PowerGrid, operationpoint,node, interval)
     dz = Pro_kerg * Frand # Random Pertubation along the Projection of the Constraind Manifold
 
     PerturbedState = copy(operationpoint) # otherwise operationpoint is overwritten
-    PerturbedState[node, :θ] = abs(dz[1]) # thats not correct but its a quick workaround for now
-    PerturbedState[node, :v] = dz[3]
+    # TODO: this fails for me. It seems there's a setindex bug for the State object?
+    #PerturbedState[node, :φ] = abs(dz[1]) # thats not correct but its a quick workaround for now
+    PerturbedState[node, :u] = dz[3] * exp(1im * abs(dz[1]))
 
     return PerturbedState
 end

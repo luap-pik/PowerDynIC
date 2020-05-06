@@ -43,7 +43,7 @@ end [[θ,dθ],[ω, dω]] begin
     i_c = 1im * i * exp(-1im * θ)
     e_c = 1im * u * exp(-1im * θ)
     p = real(u * conj(i))
-    e_d = 0                         # simpilfication from K.Schmietendorf paper
+    e_d = 0                         # simplification from K.Schmietendorf paper
     e_q = imag(e_c)
     i_d = real(i_c)
     i_q = imag(i_c)

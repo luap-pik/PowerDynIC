@@ -1,10 +1,32 @@
-import PowerDynamics: rhs
-#=
-function rhs(pg::PowerGrid; parallel=false)
-    network_dynamics(map(construct_vertex, pg.nodes), map(construct_edge, pg.lines), pg.graph; parallel=parallel)
+using PowerDynamics: rhs
+using DifferentialEquations: DAEFunction
+
+function rhs_dae(pg::PowerGrid)
+    rpg_ode = rhs(pg)
+
+    du_temp = zeros(systemsize(pg))
+
+    function dae_form(res, du, u, p, t)
+        rpg_ode.f(du_temp, u, p, t)
+        @. res = du - du_temp
+    end
+
+    return DAEFunction{true, true}(dae_form, syms=rpg_ode.syms)
 end
-=#
-import PowerDynamics: find_operationpoint
+
+using LinearAlgebra: diag
+using OrdinaryDiffEq: ODEFunction
+
+function differential_vars(pg::PowerGrid)
+    rpg_ode = rhs(pg)
+    return (diag(Array(rpg_ode.mass_matrix)) .== 1)
+end
+
+function differential_vars(rpg_ode::ODEFunction)
+    return (diag(Array(rpg_ode.mass_matrix)) .== 1)
+end
+
+import PowerDynamics: find_operationpoint, State
 using NLsolve: nlsolve, converged
 
 function find_operationpoint(pg::PowerGrid; ic_guess = nothing, tol=1E-9)
@@ -16,8 +38,7 @@ function find_operationpoint(pg::PowerGrid; ic_guess = nothing, tol=1E-9)
     end
 
     if ic_guess === nothing
-        system_size = systemsize(pg)
-        ic_guess = ones(system_size)
+        ic_guess = initial_guess(pg)
     end
 
     rr = RootRhs(rhs(pg))
@@ -112,6 +133,7 @@ function find_valid_initial_condition(pg::PowerGrid, ic_guess)
     end
 end
 
+using PowerDynamics: AbstractNode
 """
 Makes an type specific initial guess to help the operation point search.
 The voltage is of all nodes is fixed to the voltage of the first SlackAlgebraic
@@ -128,10 +150,24 @@ function initial_guess(pg::PowerGrid)
 
     sl = findfirst(SlackAlgebraic  ∈  pg.nodes .|> typeof)
     slack = pg.nodes[sl]
-    guess(::Type{SlackAlgebraic}) = [slack.U, 0.]         #[:u_r, :u_i]
-    guess(::Type{PQAlgebraic}) = [slack.U, 0.]            #[:u_r, :u_i]
-    guess(::Type{ThirdOrderEq}) = [slack.U, 0., 0., 0.]   #[:u_r, :u_i, :θ, :ω]
 
-    type_guesses = pg.nodes .|> typeof .|> guess
-    icm = vcat(type_guesses...)
+    type_guesses = guess.(pg.nodes, slack.U)
+    return vcat(type_guesses...)
+end
+
+"""
+guess(::Type{SlackAlgebraic}) = [slack.U, 0.]         #[:u_r, :u_i]
+guess(::Type{PQAlgebraic}) = [slack.U, 0.]            #[:u_r, :u_i]
+guess(::Type{ThirdOrderEq}) = [slack.U, 0., 0., 0.]   #[:u_r, :u_i, :θ, :ω]
+"""
+function guess(n::AbstractNode, slack_voltage)
+    voltage = zeros(dimension(n))
+    voltage[1] = real(slack_voltage)  #[:u_r, :u_i]
+    voltage[2] = imag(slack_voltage)
+    return voltage
+end
+
+function guess(n::SlackAlgebraic, slack_voltage)
+    @assert n.U == slack_voltage
+    return [real(n.U), imag(n.U)]
 end

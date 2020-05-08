@@ -1,75 +1,219 @@
 using PowerDynamics
 using OrdinaryDiffEq
 using DifferentialEquations: DynamicSS
-using Sundials
-using Plots
 
-const base_power = 1E6 # W
-const base_voltage = 20E3 # V
-const base_current = base_power / base_voltage # A
-const base_admittance = base_power / base_voltage^2 # 1/Ω
-const ω = 2 * π * 50.0 # Hz
+## set per unit MV
+const base_power = 1E6 # 1MW
+const base_voltage = 20E3 # 20kV
+const base_current = base_power / base_voltage # 50A
+const base_admittance = base_power / base_voltage^2 # 0.0025Ω^-1
+const ω = 2 * π * 50.0 # 314.1593rad/s
+# per unit HV
+const base_voltage_HV = 110E3 # 110kV
 
-# some additional functions that might develop into new PD.jl features
+## some additional functions that might develop into new PD.jl features
 include("PDpatches.jl")
+# control layer (needs ControlledPowerGrid from PDpatches)
+include("../example_cases/CIGRE/control.jl")
 # custom node type
-include("components/ThirdOrderEq.jl")
 include("components/DGUnit.jl")
+include("components/OLTC.jl")
+# TODO PD systemsize issue. base State type on GraphData??
+include("components/RLLine.jl")
 
-function testbed(device, U, S, Y)
-    busses = [SlackAlgebraic(;U=U), device, PQAlgebraic(;S=S)]
-    lines = [StaticLine(;from=1, to=2, Y=Y), StaticLine(;from=2, to=3, Y=Y)]
-    return PowerGrid(busses, lines)
+
+## define test cases
+
+function testbed_chain(
+    device,
+    S,
+    U = complex(1.0, 0.0),
+    Y = complex(270.0, -380.0),
+    P_ref = t -> -2,
+    Q_ref = t -> 0.0,
+)
+    busses = [SlackAlgebraic(; U = U), device, PQAlgebraic(; S = S)]
+    lines = [
+        StaticLine(; from = 1, to = 2, Y = Y),
+        StaticLine(; from = 2, to = 3, Y = Y),
+    ]
+    pg = PowerGrid(busses, lines)
+    pg, ADN(pg, typeof(device), P_ref, Q_ref)
 end
 
-device = ThirdOrderEq(H = 3.318, P = 0.6337, D = 0.1, Ω = 50, E_f = 0.5, T_d_dash = 8.690, X_q_dash = 0.103, X_d_dash = 0.111, X_d = 0.1)
+function testbed(
+    device1,
+    device2,
+    U = complex(1.0, 0.0),
+    Y = complex(270.0, -380.0);
+    P_ref = t -> -2,
+    Q_ref = t -> 0.0,
+)
+    T = OLTC(
+        from = 1,
+        to = 2,
+        Uos = 110E3 / base_voltage_HV, # Bemessungsspannung Oberspannungsseite in kV
+        Uus = 20E3 / base_voltage,# Bemessungsspannung Unterspannungsseite in kV
+        k = 0, # Kennzahl der Schaltgruppe, Bsp: YD5-> 5
+        ssp = 10.0, # Stufenschalterposition
+        stufe_us = 0.625, # Stufung pro Stufenschalterstellung in %
+        Sr = 25E6 / base_power, #Bemessungsscheinleistung in MVA
+        uk = 12.0, # Kurzschlussspannung in %
+        Pvk = 25E3 / base_power, # Kupferverluste in MW
+        Pvl = 0.0, # Eisenverluste in kW
+        iLeer = 0.0, # Leerlaufstrom in %
+    )
+    busses = [SlackAlgebraic(; U = U), device1, device2]
+    lines = [T, StaticLine(; from = 2, to = 3, Y = Y)]
+    pg = PowerGrid(busses, lines)
+    pg, ADN(pg, typeof(device), P_ref, Q_ref)
+end
 
-# no background load
-device = DGUnit(
-    P_bkgrnd = 0.,
-    Q_bkgrnd = 0.,
-    Pr_l_min = 0., # MW, Holm: 10e12 / base_power (= not used)
-    Pr_l_max = 1.0, #1.0, # MW, Holm: 10e12 / base_power (= not used)
-    Qr_l_min = -1.0, # MW, Holm: 10e12 / base_power (= not used)
-    Qr_l_max = 1.0, # MW, Holm: 10e12 / base_power (= not used)
-    Pr_del_min = 0., #-1.0, # Holm: 0 MW - here -2.0 because overall signs are not clear
-    Pr_del_max = 1.0, # Holm: 200 MW (= not used)
-    Qr_del_min = -1.0, # Holm: -60 MW (= not used)
-    Qr_del_max = 1.0, # Holm: 60 MW (= not used)
-    T_PT1 = 0.1, # seconds
-    K_PT1 = 1.0, # PT1 gain relevant for fix point
-    Vac_ref = 20E3  / base_voltage, #* sqrt(2/3),
-    V_dead = 0.1 * 20E3  / base_voltage, #* sqrt(2/3),
-    k_FRT = 2.0 / base_current, #/ base_current,
-    imax = 1e6/20e3 / base_current / sqrt(3), # MW/kV
-    K_pll = 0.1 * base_voltage,
-    Y_shunt = t -> 0.#-0.1 * SmoothStep(t, 3.15, 3.; order=100) #0.,
+function testbed_dynamicline(
+    device,
+    U = complex(1.0, 0.0),
+    R = 0.5,
+    L = 0.7;
+    P_ref = t -> -2,
+    Q_ref = t -> 0.0,
+)
+    busses = [SlackAlgebraic(; U = U), device, device]
+    lines = [
+        RLLine(; from = 1, to = 2, R = R, L = L, ω0 = ω),
+        RLLine(; from = 1, to = 2, R = R, L = L, ω0 = ω),
+    ]
+    pg = PowerGrid(busses, lines)
+    pg, ADN(pg, typeof(device), P_ref, Q_ref)
+end
+
+function testbed_line(
+    device,
+    U = complex(1.0, 0.0),
+    Y = complex(270.0, -380.0);
+    P_ref = t -> -2,
+    Q_ref = t -> 0.0,
+)
+    busses = [SlackAlgebraic(; U = U), device, device]
+    lines = [
+        StaticLine(; from = 1, to = 2, Y = Y),
+        StaticLine(; from = 2, to = 3, Y = Y),
+    ]
+    pg = PowerGrid(busses, lines)
+    pg, ADN(pg, typeof(device), P_ref, Q_ref)
+end
+
+## setup system
+
+# define events
+t_step = 10.0 # step in the power flow reference
+t_fault = 1.0 # onset of node short circuit
+t_duration = 0.1 # duration of node short circuit
+
+# all values in p.u.
+device = DGUnitPLLPQTracking(;
+    K_pll = 0.1, #Hz/pu
+    K_PT1 = 1.0, # unit: [y]/[u] = [P]/[P] = 1
+    T_PT1 = 10.0, # unit: s
+    S_pq = complex(-1.0, -0.25), # pu
+    Y_n = 0.0,
 )
 
-pg = testbed(device, 1+0im, -0.6337, -50im)
-p = ([(.1, 0., false, false) for _ in 1:length(pg.nodes)], nothing)
+P_ref(t) = t > t_step ? -1.0 : 0
+Q_ref(t) = t > t_step ? -0.25 : 0
+
+# edge data
+# ode = rhs(pg)
+# ode.f.graph_data.e
+
+## find operating point
+
+pg, cpg = testbed(device, device; P_ref = t -> P_ref(0.0), Q_ref = t -> Q_ref(0.0))
+ode = rhs(cpg)
 state(vec) = State(pg, vec)
 solution(vec) = PowerGridSolution(vec, pg)
 
-op_guess = initial_guess(pg)
 
-ode = rhs(pg)
+op_guess = initial_guess(cpg)
 
-# dae = rhs_dae(pg)
-# prob = DAEProblem(dae, similar(op.vec), op.vec, (0., 10.), nothing; differential_vars=differential_vars(ode))
-# sol = solve(prob, IDA())
-# sol = solve(prob, DABDF2(), initializealg=ShampineCollocationInit())
+#initial_error = zeros(2)
+op_prob = ODEProblem(ode, op_guess, (0.0, t_step))#, initial_error)
+_op = solve(
+    SteadyStateProblem(op_prob),
+    DynamicSS(Rodas5(); abstol = 1e-8, reltol = 1e-6)
+)
+op = _op |> state
 
-prob = ODEProblem(ode, op_guess, (0., 10.), p)
-op = solve(SteadyStateProblem(prob), DynamicSS(Rodas5(); abstol=1e-8,reltol=1e-6,tspan=Inf)) |> state
+## check dynamics
+
+pg, cpg = testbed(device, device; P_ref = P_ref, Q_ref = Q_ref)
+ode = rhs(cpg)
 
 # TODO: debug perturb
 # TODO: why is there no change???
-u0 = copy(op.vec)
-v = op[2, :v] * exp(1im * π/3) # phase shift
-u0[[3, 4]] .= [real(v), imag(v)]
+perturb = Perturbation(3, :θ, Dec(0.0))
+u0 = perturb(op)
 
-prob = ODEProblem(ode, op_guess, (0., 10.), p)
-sol = solve(prob, Rodas4()) |> solution
+prob = ODEProblem(ode, u0.vec, (0.0, 100.0))
+_sol = solve(
+    prob,
+    Rodas4(),
+    d_discontinuities = [t_step, t_fault, t_fault + t_duration],
+)
+sol = _sol |> solution
 
-plot(sol, :, :v)
+## plots
+
+using Plots
+
+# TODO: bugs in solution object, e.g. (sol, 2, :v), (sol, 2, :φ)
+# (sol, 2, :iabs) triggers call to rhs and hangs
+# --> compare with indexing sol
+
+plot(sol, 2:3, :v)
+hline!(op[2:3, :v], label = "op")
+
+plot(sol, 2:3, :φ)
+plot!(sol, 2:3, :θ, c = "black", label = "PLL")
+#ylims!(-0.02, 0.03)
+
+plot(sol, 2:3, :P_g)
+plot!(sol, 2:3, :Q_g)
+
+plot(sol, 2:3, :P_err)
+plot!(sol, 2:3, :Q_err)
+
+
+Δ = [
+    cpg.controller(u, nothing, t) |> first
+    for (t, u) in zip(sol.dqsol.t, sol.dqsol.u)
+]
+
+plot(sol.dqsol.t, first.(Δ))
+plot!(sol.dqsol.t, last.(Δ))
+
+# currents
+node = 2
+plot(
+    sol.dqsol.t,
+    [(sol(t, node, :iabs)) for t in sol.dqsol.t],
+    label="i_$node"
+)
+# current set point
+I_r = [
+    complex(sol(t, node, :P_g), -sol(t, node, :Q_g)) / sol(t, node, :v)
+    for t in sol.dqsol.t
+]
+plot!(sol.dqsol.t, abs.(I_r), label="I_r_$node")
+
+
+P_err = [sol(t, 2:3, :P_err) for t in sol.dqsol.t]
+Q_err = [sol(t, 2:3, :Q_err) for t in sol.dqsol.t]
+
+plot(first.(P_err), first.(Q_err))
+plot!(last.(P_err), last.(Q_err))
+
+P_g = [sol(t, 2:3, :P_g) for t in sol.dqsol.t]
+Q_g = [sol(t, 2:3, :Q_g) for t in sol.dqsol.t]
+
+plot(first.(P_g), first.(Q_g))
+plot!(last.(P_g), last.(Q_g))

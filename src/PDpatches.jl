@@ -1,5 +1,18 @@
-using PowerDynamics: rhs
+import PowerDynamics: rhs, get_current
 using DifferentialEquations: DAEFunction
+using NetworkDynamics: network_dynamics, StaticEdgeFunction
+
+function rhs(pg::PowerGrid)
+    network_dynamics(map(construct_vertex, pg.nodes), map(construct_edge, pg.lines), pg.graph; parallel=true)
+end
+
+get_current(state, n) = begin
+    vertices = map(construct_vertex, state.grid.nodes)
+    edges = map(construct_edge, state.grid.lines)
+    sef = StaticEdgeFunction(vertices,edges,state.grid.graph, parallel=true)
+    (e_s, e_d) = sef(state.vec, Nothing, 0)
+    total_current(e_s[n], e_d[n])
+end
 
 function rhs_dae(pg::PowerGrid)
     rpg_ode = rhs(pg)
@@ -143,7 +156,7 @@ Inputs:
 Outputs:
     guess: Type specific initial guess
 """
-function initial_guess(pg::PowerGrid)
+function initial_guess(pg)
     if SlackAlgebraic ∉ pg.nodes .|> typeof
         @warn "There is no slack bus in the system to balance powers."
     end
@@ -154,6 +167,7 @@ function initial_guess(pg::PowerGrid)
     type_guesses = guess.(pg.nodes, slack.U)
     return vcat(type_guesses...)
 end
+
 
 """
 guess(::Type{SlackAlgebraic}) = [slack.U, 0.]         #[:u_r, :u_i]
@@ -170,4 +184,30 @@ end
 function guess(n::SlackAlgebraic, slack_voltage)
     @assert n.U == slack_voltage
     return [real(n.U), imag(n.U)]
+end
+
+using OrdinaryDiffEq: ODEFunction
+using LightGraphs: AbstractGraph
+# stack dynamics with higher level controller
+struct ControlledPowerGrid
+    graph:: G where G <: AbstractGraph
+    nodes
+    lines
+    controller # oop function
+end
+
+# Constructor
+function ControlledPowerGrid(control, pg::PowerGrid, args...)
+    ControlledPowerGrid(pg.graph, pg.nodes, pg.lines, (u, p, t) -> control(u, p, t, args...))
+end
+
+function rhs(cpg::ControlledPowerGrid)
+    open_loop_dyn = PowerGrid(cpg.graph, cpg.nodes, cpg.lines) |> rhs
+    function cpg_rhs!(du, u, p, t)
+        # Get controller state
+        p_cont = cpg.controller(u, p, t)
+        # Calculate the derivatives, passing the controller state through
+        open_loop_dyn(du, u, p_cont, t)
+    end
+    ODEFunction{true}(cpg_rhs!, mass_matrix=open_loop_dyn.mass_matrix, syms=open_loop_dyn.syms)
 end

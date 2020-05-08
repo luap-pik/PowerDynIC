@@ -1,6 +1,7 @@
 import Base: @__doc__
 import PowerDynamics: AbstractLine, PiModel, PiModelLine, construct_edge
 import PowerDynamics: PiModel
+using NetworkDynamics: StaticEdge
 
 """
 ```Julia

@@ -1,6 +1,7 @@
 using PowerDynamics: AbstractLine, construct_edge
 using LinearAlgebra: I
 import PowerDynamics: PiModel
+using NetworkDynamics: ODEEdge
 
 begin
     @__doc__ struct RLLine <: AbstractLine

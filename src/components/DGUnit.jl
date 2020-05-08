@@ -131,8 +131,8 @@ begin
 
             dP_err = - ΔP
             dQ_err = - ΔQ
-            dP_g = (K_PT1 * P_err - P_g) / T_PT1
-            dQ_g = (K_PT1 * Q_err - Q_g) / T_PT1
+            dP_g = (K_PT1 * P_err / 2. - P_g) / T_PT1
+            dQ_g = (K_PT1 * Q_err / 2. - Q_g) / T_PT1
 
             # current set point adjustment
             I_r = complex(P_g, -Q_g) / Vamp

@@ -174,10 +174,13 @@ hline!(op[2:3, :v], label = "op")
 
 plot(sol, 2:3, :φ)
 plot!(sol, 2:3, :θ, c = "black", label = "PLL")
+hline!(op[2:3, :φ], label = "op")
 #ylims!(-0.02, 0.03)
 
 plot(sol, 2:3, :P_g)
+hline!(op[2:3, :P_g], label = "op")
 plot!(sol, 2:3, :Q_g)
+hline!(op[2:3, :Q_g], label = "op")
 
 plot(sol, 2:3, :P_err)
 plot!(sol, 2:3, :Q_err)

@@ -14,7 +14,7 @@ const base_voltage_HV = 110E3 # 110kV
 ## some additional functions that might develop into new PD.jl features
 include("PDpatches.jl")
 # control layer (needs ControlledPowerGrid from PDpatches)
-include("../example_cases/CIGRE/control.jl")
+include("components/control.jl")
 # custom node type
 include("components/DGUnit.jl")
 include("components/OLTC.jl")
@@ -45,7 +45,7 @@ function testbed(
     device1,
     device2,
     U = complex(1.0, 0.0),
-    Y = complex(270.0, -380.0);
+    Y = complex(262, -375);
     P_ref = t -> -2,
     Q_ref = t -> 0.0,
 )
@@ -63,8 +63,15 @@ function testbed(
         Pvl = 0.0, # Eisenverluste in kW
         iLeer = 0.0, # Leerlaufstrom in %
     )
+    L = PiModelLine(
+        from = 2,
+        to = 3,
+        y = Y,
+        y_shunt_km = complex(0., 0.01),
+        y_shunt_mk = complex(0., 0.01),
+    )
     busses = [SlackAlgebraic(; U = U), device1, device2]
-    lines = [T, StaticLine(; from = 2, to = 3, Y = Y)]
+    lines = [T, L]
     pg = PowerGrid(busses, lines)
     pg, ADN(pg, typeof(device), P_ref, Q_ref)
 end
@@ -161,9 +168,21 @@ _sol = solve(
 )
 sol = _sol |> solution
 
+## node short circuit
+
+nsc = NodeShortCircuit(3, 10base_admittance, (t_fault, t_fault+t_duration)) # 10Ω
+
+_sol = simulate_nsc(nsc, cpg, _op, (0., 20.))
+sol = _sol |> solution
+
 ## plots
 
 using Plots
+plotly()
+
+inc = (last(sol.dqsol.prob.tspan) - first(sol.dqsol.prob.tspan)) / 100.
+t_array = range(first(sol.dqsol.prob.tspan); stop=last(sol.dqsol.prob.tspan), step=inc)
+
 
 # TODO: bugs in solution object, e.g. (sol, 2, :v), (sol, 2, :φ)
 # (sol, 2, :iabs) triggers call to rhs and hangs
@@ -171,20 +190,23 @@ using Plots
 
 plot(sol, 2:3, :v)
 hline!(op[2:3, :v], label = "op")
+vline!([t_fault, t_fault + t_duration], label="fault", c=:black)
 
 plot(sol, 2:3, :φ)
 plot!(sol, 2:3, :θ, c = "black", label = "PLL")
 hline!(op[2:3, :φ], label = "op")
-#ylims!(-0.02, 0.03)
+vline!([t_fault, t_fault + t_duration], label="fault", c=:black)
+#ylims!(-0.01, 0.01)
 
 plot(sol, 2:3, :P_g)
 hline!(op[2:3, :P_g], label = "op")
 plot!(sol, 2:3, :Q_g)
 hline!(op[2:3, :Q_g], label = "op")
+vline!([t_fault, t_fault + t_duration], label="fault", c=:black)
+
 
 plot(sol, 2:3, :P_err)
 plot!(sol, 2:3, :Q_err)
-
 
 Δ = [
     cpg.controller(u, nothing, t) |> first
@@ -193,30 +215,33 @@ plot!(sol, 2:3, :Q_err)
 
 plot(sol.dqsol.t, first.(Δ))
 plot!(sol.dqsol.t, last.(Δ))
+vline!([t_fault, t_fault + t_duration], label="fault", c=:black)
 
+t_array
 # currents
 node = 2
 plot(
-    sol.dqsol.t,
-    [(sol(t, node, :iabs)) for t in sol.dqsol.t],
+    t_array,
+    sol.(t_array, node, :iabs),
     label="i_$node"
 )
+vline!([t_fault, t_fault + t_duration], label="fault", c=:black)
 # current set point
 I_r = [
     complex(sol(t, node, :P_g), -sol(t, node, :Q_g)) / sol(t, node, :v)
-    for t in sol.dqsol.t
+    for t in t_array
 ]
-plot!(sol.dqsol.t, abs.(I_r), label="I_r_$node")
+plot!(t_array, abs.(I_r), label="I_r_$node")
 
 
-P_err = [sol(t, 2:3, :P_err) for t in sol.dqsol.t]
-Q_err = [sol(t, 2:3, :Q_err) for t in sol.dqsol.t]
+P_err = sol.(t_array, 2:3, :P_err)
+Q_err = sol.(t_array, 2:3, :Q_err)
 
 plot(first.(P_err), first.(Q_err))
 plot!(last.(P_err), last.(Q_err))
 
-P_g = [sol(t, 2:3, :P_g) for t in sol.dqsol.t]
-Q_g = [sol(t, 2:3, :Q_g) for t in sol.dqsol.t]
+P_g = sol.(t_array, 2:3, :P_g)
+Q_g = sol.(t_array, 2:3, :Q_g)
 
 plot(first.(P_g), first.(Q_g))
 plot!(last.(P_g), last.(Q_g))

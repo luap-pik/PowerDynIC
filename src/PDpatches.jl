@@ -135,7 +135,7 @@ function RootRhs_ic(of::ODEFunction)
 end
 
 
-function find_valid_initial_condition(pg::PowerGrid, ic_guess)
+function find_valid_initial_condition(pg, ic_guess)
     rr = RootRhs_ic(rhs(pg))
     nl_res = nlsolve(rr, ic_guess)
     if converged(nl_res) == true

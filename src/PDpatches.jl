@@ -1,10 +1,45 @@
-import PowerDynamics: rhs
-#=
-function rhs(pg::PowerGrid; parallel=false)
-    network_dynamics(map(construct_vertex, pg.nodes), map(construct_edge, pg.lines), pg.graph; parallel=parallel)
+import PowerDynamics: rhs, get_current
+using DifferentialEquations: DAEFunction
+using NetworkDynamics: network_dynamics, StaticEdgeFunction
+
+function rhs(pg::PowerGrid)
+    network_dynamics(map(construct_vertex, pg.nodes), map(construct_edge, pg.lines), pg.graph; parallel=true)
 end
-=#
-import PowerDynamics: find_operationpoint
+
+get_current(state, n) = begin
+    vertices = map(construct_vertex, state.grid.nodes)
+    edges = map(construct_edge, state.grid.lines)
+    sef = StaticEdgeFunction(vertices,edges,state.grid.graph, parallel=true)
+    (e_s, e_d) = sef(state.vec, Nothing, 0)
+    total_current(e_s[n], e_d[n])
+end
+
+function rhs_dae(pg::PowerGrid)
+    rpg_ode = rhs(pg)
+
+    du_temp = zeros(systemsize(pg))
+
+    function dae_form(res, du, u, p, t)
+        rpg_ode.f(du_temp, u, p, t)
+        @. res = du - du_temp
+    end
+
+    return DAEFunction{true, true}(dae_form, syms=rpg_ode.syms)
+end
+
+using LinearAlgebra: diag
+using OrdinaryDiffEq: ODEFunction
+
+function differential_vars(pg::PowerGrid)
+    rpg_ode = rhs(pg)
+    return (diag(Array(rpg_ode.mass_matrix)) .== 1)
+end
+
+function differential_vars(rpg_ode::ODEFunction)
+    return (diag(Array(rpg_ode.mass_matrix)) .== 1)
+end
+
+import PowerDynamics: find_operationpoint, State
 using NLsolve: nlsolve, converged
 
 function find_operationpoint(pg::PowerGrid; ic_guess = nothing, tol=1E-9)
@@ -16,8 +51,7 @@ function find_operationpoint(pg::PowerGrid; ic_guess = nothing, tol=1E-9)
     end
 
     if ic_guess === nothing
-        system_size = systemsize(pg)
-        ic_guess = ones(system_size)
+        ic_guess = initial_guess(pg)
     end
 
     rr = RootRhs(rhs(pg))
@@ -101,7 +135,7 @@ function RootRhs_ic(of::ODEFunction)
 end
 
 
-function find_valid_initial_condition(pg::PowerGrid, ic_guess)
+function find_valid_initial_condition(pg, ic_guess)
     rr = RootRhs_ic(rhs(pg))
     nl_res = nlsolve(rr, ic_guess)
     if converged(nl_res) == true
@@ -112,6 +146,7 @@ function find_valid_initial_condition(pg::PowerGrid, ic_guess)
     end
 end
 
+using PowerDynamics: AbstractNode
 """
 Makes an type specific initial guess to help the operation point search.
 The voltage is of all nodes is fixed to the voltage of the first SlackAlgebraic
@@ -121,17 +156,58 @@ Inputs:
 Outputs:
     guess: Type specific initial guess
 """
-function initial_guess(pg::PowerGrid)
+function initial_guess(pg)
     if SlackAlgebraic ∉ pg.nodes .|> typeof
         @warn "There is no slack bus in the system to balance powers."
     end
 
     sl = findfirst(SlackAlgebraic  ∈  pg.nodes .|> typeof)
     slack = pg.nodes[sl]
-    guess(::Type{SlackAlgebraic}) = [slack.U, 0.]         #[:u_r, :u_i]
-    guess(::Type{PQAlgebraic}) = [slack.U, 0.]            #[:u_r, :u_i]
-    guess(::Type{ThirdOrderEq}) = [slack.U, 0., 0., 0.]   #[:u_r, :u_i, :θ, :ω]
 
-    type_guesses = pg.nodes .|> typeof .|> guess
-    icm = vcat(type_guesses...)
+    type_guesses = guess.(pg.nodes, slack.U)
+    return vcat(type_guesses...)
+end
+
+
+"""
+guess(::Type{SlackAlgebraic}) = [slack.U, 0.]         #[:u_r, :u_i]
+guess(::Type{PQAlgebraic}) = [slack.U, 0.]            #[:u_r, :u_i]
+guess(::Type{ThirdOrderEq}) = [slack.U, 0., 0., 0.]   #[:u_r, :u_i, :θ, :ω]
+"""
+function guess(n::AbstractNode, slack_voltage)
+    voltage = zeros(dimension(n))
+    voltage[1] = real(slack_voltage)  #[:u_r, :u_i]
+    voltage[2] = imag(slack_voltage)
+    return voltage
+end
+
+function guess(n::SlackAlgebraic, slack_voltage)
+    @assert n.U == slack_voltage
+    return [real(n.U), imag(n.U)]
+end
+
+using OrdinaryDiffEq: ODEFunction
+using LightGraphs: AbstractGraph
+# stack dynamics with higher level controller
+struct ControlledPowerGrid
+    graph:: G where G <: AbstractGraph
+    nodes
+    lines
+    controller # oop function
+end
+
+# Constructor
+function ControlledPowerGrid(control, pg::PowerGrid, args...)
+    ControlledPowerGrid(pg.graph, pg.nodes, pg.lines, (u, p, t) -> control(u, p, t, args...))
+end
+
+function rhs(cpg::ControlledPowerGrid)
+    open_loop_dyn = PowerGrid(cpg.graph, cpg.nodes, cpg.lines) |> rhs
+    function cpg_rhs!(du, u, p, t)
+        # Get controller state
+        p_cont = cpg.controller(u, p, t)
+        # Calculate the derivatives, passing the controller state through
+        open_loop_dyn(du, u, p_cont, t)
+    end
+    ODEFunction{true}(cpg_rhs!, mass_matrix=open_loop_dyn.mass_matrix, syms=open_loop_dyn.syms)
 end

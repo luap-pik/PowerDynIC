@@ -2,11 +2,11 @@ import PowerDynamics: rhs, get_current
 using DifferentialEquations: DAEFunction
 using NetworkDynamics: network_dynamics, StaticEdgeFunction
 
-function rhs(pg::PowerGrid)
-    network_dynamics(map(construct_vertex, pg.nodes), map(construct_edge, pg.lines), pg.graph; parallel=true)
-end
+#function rhs(pg::PowerGrid)
+#    network_dynamics(map(construct_vertex, pg.nodes), map(construct_edge, pg.lines), pg.graph; parallel=true)
+#end
 
-get_current(state, n) = begin
+get_current1(state, n) = begin
     vertices = map(construct_vertex, state.grid.nodes)
     edges = map(construct_edge, state.grid.lines)
     sef = StaticEdgeFunction(vertices,edges,state.grid.graph, parallel=true)
@@ -68,16 +68,29 @@ using SparseArrays: sparse
 using LinearAlgebra: eigvals
 using NLsolve: OnceDifferentiable
 
-function check_eigenvalues(rpg, vec)
+"""
+Ist das so richtig beschrieben?
+Calculates and returns the eigenvalues λ of the jacobian of the right hand side of
+the powergrid at the state s.
+The sign of the real part of the eigenvalues will decide whether a fixed point
+will be attracting (λ_max < 0) or repelling (λ_max > 0).
+Inputs:
+       pg: Power grid, a graph containg nodes and lines
+       s: State of the powergrid
+Outputs:
+        λ: The biggest and the smallest eigenvalue
+        stable: Determines the stability by checking if λ_max is positive
+"""
+function check_eigenvalues(pg::PowerGrid, s::State)
+    rpg = rhs(pg)
     M = Array(rpg.mass_matrix)
     f!(dx, x) = rpg(dx, x, nothing, 0.)
     j(x) = (dx = similar(x); jacobian(f!, dx, x))
-    λ = eigvals(j(vec) * pinv(M) * M) .|> real |> extrema
-    println("Jacobian spectrum \nmin : ", first(λ), "\nmax : ",last(λ), "\nstable : ", isapprox(last(λ), 0, atol=1e-8))
-    return λ
+    λ = eigvals(j(s.vec) * pinv(M) * M) .|> real |> extrema
+    stable = isapprox(last(λ), 0, atol=1e-8)
+    return λ, stable
 end
 
-check_eigenvalues(rpg, s::State) = check_eigenvalues(rpg, s.vec)
 
 function find_operationpoint_sparse(pg::PowerGrid; ic_guess = nothing, tol=1E-9)
     if SlackAlgebraic ∉ pg.nodes .|> typeof

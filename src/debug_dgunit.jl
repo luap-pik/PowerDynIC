@@ -1,3 +1,6 @@
+using Pkg
+Pkg.activate(".")
+
 using PowerDynamics
 using OrdinaryDiffEq
 using DifferentialEquations: DynamicSS
@@ -20,6 +23,8 @@ include("components/DGUnit.jl")
 include("components/OLTC.jl")
 # TODO PD systemsize issue. base State type on GraphData??
 include("components/RLLine.jl")
+# load actual data
+include("../example_cases/CIGRE/cigre_static.jl")
 
 
 ## define test cases
@@ -39,6 +44,34 @@ function testbed_chain(
     ]
     pg = PowerGrid(busses, lines)
     pg, ADN(pg, typeof(device), P_ref, Q_ref)
+end
+
+function testbed_CIGRE(
+    DG_unit_type;
+    idx=1:3,
+    P_ref = t -> -2,
+    Q_ref = t -> 0.0,
+)
+    busses_static, lines, T, elist, Zs, Yshs = CIGRE_static()
+    busses = copy(busses_static)
+    DG_locs = 2:12
+    for i in DG_locs
+        S_bkgrnd = zero(im)
+        try
+            S_bkgrnd = busses_static[i].S
+        catch
+            S_bkgrnd = complex(busses_static[i].P, busses_static[i].Q)
+        end
+        busses[i] = eval(Symbol(DG_unit_type))(;
+            K_pll = 0.1base_voltage, #Hz/pu
+            K_PT1 = 1.0, # unit: [y]/[u] = [P]/[P] = 1
+            T_PT1 = 0.1, # unit: s
+            S_pq = S_bkgrnd, # pu
+            Y_n = 0.0,
+        )
+    end
+    pg = PowerGrid(busses[idx], lines[1:length(idx)-1])
+    pg, ADN(pg, DG_unit_type, P_ref, Q_ref)
 end
 
 function testbed(
@@ -109,13 +142,6 @@ function testbed_line(
     pg, ADN(pg, typeof(device), P_ref, Q_ref)
 end
 
-## setup system
-
-# define events
-t_step = 10.0 # step in the power flow reference
-t_fault = 1.0 # onset of node short circuit
-t_duration = 0.1 # duration of node short circuit
-
 # all values in p.u.
 device = DGUnitPLLPQTracking(;
     K_pll = 0.1, #Hz/pu
@@ -124,6 +150,13 @@ device = DGUnitPLLPQTracking(;
     S_pq = complex(-1.0, -0.25), # pu
     Y_n = 0.0,
 )
+
+## setup system
+
+# define events
+t_step = 10.0 # step in the power flow reference
+t_fault = 1.0 # onset of node short circuit
+t_duration = 0.1 # duration of node short circuit
 
 P_ref(t) = t > t_step ? -1.0 : 0
 Q_ref(t) = t > t_step ? -0.25 : 0
@@ -134,7 +167,7 @@ Q_ref(t) = t > t_step ? -0.25 : 0
 
 ## find operating point
 
-pg, cpg = testbed(device, device; P_ref = t -> P_ref(0.0), Q_ref = t -> Q_ref(0.0))
+pg, cpg = testbed_CIGRE(DGUnitPLLPQTracking; idx=1:12, P_ref = t -> P_ref(0.0), Q_ref = t -> Q_ref(0.0))
 ode = rhs(cpg)
 state(vec) = State(pg, vec)
 solution(vec) = PowerGridSolution(vec, pg)
@@ -146,13 +179,13 @@ op_guess = initial_guess(cpg)
 op_prob = ODEProblem(ode, op_guess, (0.0, t_step))#, initial_error)
 _op = solve(
     SteadyStateProblem(op_prob),
-    DynamicSS(Rodas5(); abstol = 1e-8, reltol = 1e-6)
+    DynamicSS(Rodas5(); abstol = 1e-8, reltol = 1e-6, tspan=Inf)
 )
 op = _op |> state
 
 ## check dynamics
 
-pg, cpg = testbed(device, device; P_ref = P_ref, Q_ref = Q_ref)
+pg, cpg = testbed_CIGRE(DGUnitPLLPQTracking; idx=1:12, P_ref = P_ref, Q_ref = Q_ref)
 ode = rhs(cpg)
 
 # TODO: debug perturb
@@ -160,7 +193,7 @@ ode = rhs(cpg)
 perturb = Perturbation(3, :θ, Dec(0.0))
 u0 = perturb(op)
 
-prob = ODEProblem(ode, u0.vec, (0.0, 100.0))
+prob = ODEProblem(ode, u0.vec, (0.0, 30.0))
 _sol = solve(
     prob,
     Rodas4(),
@@ -172,7 +205,7 @@ sol = _sol |> solution
 
 nsc = NodeShortCircuit(3, 10base_admittance, (t_fault, t_fault+t_duration)) # 10Ω
 
-_sol = simulate_nsc(nsc, cpg, _op, (0., 20.))
+_sol = simulate_nsc(nsc, cpg, _op, (0., 30.))
 sol = _sol |> solution
 
 ## plots
@@ -188,13 +221,17 @@ t_array = range(first(sol.dqsol.prob.tspan); stop=last(sol.dqsol.prob.tspan), st
 # (sol, 2, :iabs) triggers call to rhs and hangs
 # --> compare with indexing sol
 
-plot(sol, 2:3, :v)
+plot(sol, :, :v, c=:gray, label=false)
+plot!(sol, 2:3, :v)
 hline!(op[2:3, :v], label = "op")
+vline!([t_step,], label="step", c=:black)
 vline!([t_fault, t_fault + t_duration], label="fault", c=:black)
 
-plot(sol, 2:3, :φ)
+plot(sol, :, :φ, c=:gray, label=false)
+plot!(sol, 2:3, :φ)
 plot!(sol, 2:3, :θ, c = "black", label = "PLL")
 hline!(op[2:3, :φ], label = "op")
+vline!([t_step,], label="step", c=:black)
 vline!([t_fault, t_fault + t_duration], label="fault", c=:black)
 #ylims!(-0.01, 0.01)
 
@@ -202,6 +239,7 @@ plot(sol, 2:3, :P_g)
 hline!(op[2:3, :P_g], label = "op")
 plot!(sol, 2:3, :Q_g)
 hline!(op[2:3, :Q_g], label = "op")
+vline!([t_step,], label="step", c=:black)
 vline!([t_fault, t_fault + t_duration], label="fault", c=:black)
 
 
@@ -215,16 +253,17 @@ plot!(sol, 2:3, :Q_err)
 
 plot(sol.dqsol.t, first.(Δ))
 plot!(sol.dqsol.t, last.(Δ))
+vline!([t_step,], label="step", c=:black)
 vline!([t_fault, t_fault + t_duration], label="fault", c=:black)
 
-t_array
 # currents
-node = 2
+node = 3
 plot(
     t_array,
     sol.(t_array, node, :iabs),
     label="i_$node"
 )
+vline!([t_step,], label="step", c=:black)
 vline!([t_fault, t_fault + t_duration], label="fault", c=:black)
 # current set point
 I_r = [
@@ -239,9 +278,3 @@ Q_err = sol.(t_array, 2:3, :Q_err)
 
 plot(first.(P_err), first.(Q_err))
 plot!(last.(P_err), last.(Q_err))
-
-P_g = sol.(t_array, 2:3, :P_g)
-Q_g = sol.(t_array, 2:3, :Q_g)
-
-plot(first.(P_g), first.(Q_g))
-plot!(last.(P_g), last.(Q_g))

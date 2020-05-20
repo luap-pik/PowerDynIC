@@ -14,7 +14,7 @@ get_current(state, n) = begin
     total_current(e_s[n], e_d[n])
 end
 
-function rhs_dae(pg::PowerGrid)
+function rhs_dae(pg)
     rpg_ode = rhs(pg)
 
     du_temp = zeros(systemsize(pg))
@@ -30,9 +30,9 @@ end
 using LinearAlgebra: diag
 using OrdinaryDiffEq: ODEFunction
 
-function differential_vars(pg::PowerGrid)
+function differential_vars(pg)
     rpg_ode = rhs(pg)
-    return (diag(Array(rpg_ode.mass_matrix)) .== 1)
+    return diag(Array(rpg_ode.mass_matrix)) #(diag(Array(rpg_ode.mass_matrix)) .== 1)
 end
 
 function differential_vars(rpg_ode::ODEFunction)
@@ -139,7 +139,7 @@ function find_valid_initial_condition(pg, ic_guess)
     rr = RootRhs_ic(rhs(pg))
     nl_res = nlsolve(rr, ic_guess)
     if converged(nl_res) == true
-        return nl_res.zero #State(pg, nl_res.zero)
+        return State(pg, nl_res.zero)
     else
         println("Failed to find initial conditions on the constraint manifold!")
         println("Try running nlsolve with other options.")
@@ -186,6 +186,19 @@ function guess(n::SlackAlgebraic, slack_voltage)
     return [real(n.U), imag(n.U)]
 end
 
+function find_steady_state(pg, op_guess=nothing)
+    if op_guess isa Nothing
+        op_guess = initial_guess(pg)
+    end
+    ode = rhs(pg)
+    op_prob = ODEProblem(ode, op_guess, (0.0, 1.0))
+    sol = solve(
+        SteadyStateProblem(op_prob),
+        DynamicSS(Rodas5(); abstol = 1e-8, reltol = 1e-6, tspan = Inf),
+    )
+    return State(pg, sol.u)
+end
+
 using OrdinaryDiffEq: ODEFunction
 using LightGraphs: AbstractGraph
 # stack dynamics with higher level controller
@@ -200,6 +213,19 @@ end
 function ControlledPowerGrid(control, pg::PowerGrid, args...)
     ControlledPowerGrid(pg.graph, pg.nodes, pg.lines, (u, p, t) -> control(u, p, t, args...))
 end
+
+import PowerDynamics: PowerGrid
+
+PowerGrid(pg::PowerGrid) = pg
+PowerGrid(pg::ControlledPowerGrid) = PowerGrid(pg.graph, pg.nodes, pg.lines)
+
+import PowerDynamics: State, PowerGridSolution
+State(pg::ControlledPowerGrid, vec) = State(PowerGrid(pg), vec)
+PowerGridSolution(vec, pg::ControlledPowerGrid) = PowerGridSolution(vec, PowerGrid(pg))
+
+import PowerDynamics: systemsize
+
+systemsize(cpg::ControlledPowerGrid) = systemsize(PowerGrid(cpg.graph, cpg.nodes, cpg.lines))
 
 function rhs(cpg::ControlledPowerGrid)
     open_loop_dyn = PowerGrid(cpg.graph, cpg.nodes, cpg.lines) |> rhs

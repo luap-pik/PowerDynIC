@@ -201,7 +201,7 @@ function simulate_nsc(nsc::NodeShortCircuit, powergrid::ControlledPowerGrid, x1,
     function errorState(integrator)
         sol1 = integrator.sol
         x2 = find_valid_initial_condition(nsc_powergrid, sol1[end]) # Jump the state to be valid for the new system.
-        println(x2)
+        #println(x2)
         integrator.f = rhs(nsc_powergrid)
         integrator.u = x2
     end
@@ -209,7 +209,7 @@ function simulate_nsc(nsc::NodeShortCircuit, powergrid::ControlledPowerGrid, x1,
     function regularState(integrator)
         sol2 = integrator.sol
         x3 = find_valid_initial_condition(nsc_powergrid, sol2[end]) # Jump the state to be valid for the new system.
-        println(x3)
+        #println(x3)
         integrator.f = rhs(powergrid)
         integrator.u = x3
     end

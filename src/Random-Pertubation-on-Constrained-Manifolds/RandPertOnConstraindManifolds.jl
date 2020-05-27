@@ -7,9 +7,10 @@ using LinearAlgebra
 using DiffEqCallbacks
 include("../PDpatches.jl")
 include("system.jl")
-
+include("PowerFlow.jl")
 
 """
+# neuer text?
 A method to find random pertubations in the case of systems with algebraic
 constraints. There is then a set of valid initial conditions which lies on a so
 called constrained manifold.
@@ -17,30 +18,28 @@ The system must still lie on this manifold after the random pertubation.
 This could be applied to Basin Stability Methods in the case of complexer
 Generator Methods which contain algebraic constraints.
 """
-function RandPertWithConstrains(pg::PowerGrid, operationpoint,node, interval)
-    g(θ,i,u) = [1im * i * exp(-1im * θ), 1im * u * exp(-1im * θ)] # Constraints
-    #g(θ,i,u) = [1im * u * exp(-1im * θ)] # Constraints
-
+function RandPertWithConstrains(pg::PowerGrid, operationpoint, node, interval, Q)
+    #Pi = pg.nodes[node].P # Power of the specific node
+    g(θ,i,u) = Q - i * exp(-1im * θ) * u * exp(-1im * θ) # Constraint, Power Flow Analysis
     z = [operationpoint[node,:θ], operationpoint[node,:iabs],operationpoint[node,:v]]
 
-    Jacg_imag = ForwardDiff.jacobian(x -> imag(g(x[1],x[2],x[3])), z)
-    Jacg_real = ForwardDiff.jacobian(x -> real(g(x[1],x[2],x[3])), z)
+    #Jacg_imag = ForwardDiff.jacobian(x -> imag(g(x[1],x[2],x[3])), z)
+    #Jacg_real = ForwardDiff.jacobian(x -> real(g(x[1],x[2],x[3])), z)
 
-    Jacg = Jacg_real + 1im .* Jacg_imag  # I could not find a package which is able to handle complex valued function
+    #Jacg = Jacg_real + 1im .* Jacg_imag  # I could not find a package which is able to handle complex valued function
+    Jacg = ForwardDiff.gradient(x -> real(g(x[1],x[2],x[3])), z) .+ 1im .* ForwardDiff.gradient(x -> imag(g(x[1],x[2],x[3])), z)
 
-    #Jacg = grad = ForwardDiff.gradient(x -> real(g(x[1],x[2],x[3])), z) .+ 1im .* ForwardDiff.gradient(x -> imag(g(x[1],x[2],x[3])), z)
+    kerJacg = nullspace(Matrix(Jacg')) # kernel of Jacobian, returns orthogonal vectors
 
-    kerJacg = nullspace(Jacg) # kernel of Jacg, returns orthogonal vectors
+    Pro_kerg = Projvw(z, kerJacg[:,2]) # Projection of z on ker(∇g(z))
 
-    Pro_kerg = Projvw(z, kerJacg) # Projection of z on ker(∇g(z))
+    Frand = rand(Uniform(interval[1],interval[2]), length(z))
+    #Frand = rand(Uniform(interval[1], interval[2]))  # random pertubation "force"
 
-    Frand = rand(Uniform(interval[1],interval[2]), length(z)) # random pertubation "force"
-
-    dz = Pro_kerg .* Frand # Random Pertubation along the Projection of the Constraind Manifold
+    dz = Pro_kerg .* Frand                # Random Pertubation along the Projection of the Constraind Manifold
     PerturbedState = copy(operationpoint) # otherwise operationpoint is overwritten
     PerturbedState[node, :θ] = abs(dz[1]) # thats not correct but its a quick workaround for now
     PerturbedState[node, :u] = dz[3]
-
     return PerturbedState,dz
 end
 

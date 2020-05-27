@@ -1,10 +1,28 @@
 const PERFORM_CHECKS = false
 
+using MAT
+using DataFrames
+using CSV
+
 using ForwardDiff: jacobian
 using SparseArrays: sparse
 using LinearAlgebra: eigvals
 
-function stable_power_flow(pg::PowerGrid, ic_guess::AbstractArray; sparse_jac=false, project=false, eig=true, p=nothing, t0=0.0)
+function map_complex_2D(array)
+    n = length(array)
+    out = zeros(2n)
+    for i = 1:n
+        out[2i-1] = real(array[i])
+        out[2i] = imag(array[i])
+    end
+    return out
+end
+
+function map_2D_complex(array)
+    return array[1:2:end] .+ 1im .* array[2:2:end]
+end
+
+function stable_power_flow(pg, ic_guess::AbstractArray; sparse_jac=false, project=false, eig=true, p=nothing, t0=0.0)
     pgr = rhs(pg)
     M = Array(pgr.mass_matrix)
     n = systemsize(pg)
@@ -46,8 +64,9 @@ function stable_power_flow(pg::PowerGrid, ic_guess::AbstractArray; sparse_jac=fa
 
     return State(pg, fixed_point.zero)
 end
+
 stable_power_flow(
-    pg::PowerGrid,
+    pg,
     ic_guess::State;
     sparse_jac = false,
     project = false,
@@ -66,8 +85,8 @@ stable_power_flow(
 
 
 
-function pf_sol(pg::PowerGrid, ic_guess, p; outfile="$dir/power_flow_sol.csv")
 
+function pf_sol(pg, ic_guess, p)
     #### solve power flow
     root_rhs = (dx, x) -> rhs(pg)(dx, x, p, 0.)
     pf = nlsolve(root_rhs, ic_guess, autodiff = :forward, method = :newton, xtol = 1E-10).zero #
@@ -79,6 +98,8 @@ function pf_sol(busses_static, lines; matfile="$dir/LFCigre.mat", outfile="$dir/
     #### read from Matlab
     matlab_data = matread(matfile)
     uK = Array(matlab_data["uK"])[:]
+    uK[1] *= 1e3/base_voltage_HV
+    uK[2:end] .*= 1e3/base_voltage
     sK = Array(matlab_data["sK"])[:]
 
     #### solve power flow
@@ -87,7 +108,7 @@ function pf_sol(busses_static, lines; matfile="$dir/LFCigre.mat", outfile="$dir/
     rpg! = rhs(pg)
 
     ic_guess = map_complex_2D(uK)
-    root_rhs = RootRhs(rhs(pg))
+    root_rhs = RootRhs_ic(rhs(pg))
     pf = nlsolve(root_rhs, ic_guess, autodiff = :forward,  method = :newton, xtol = 1E-10).zero #
 
     line_currents = [PowerDynamics.get_current(State(pg, pf), k) for k = 1:length(busses_static)]

@@ -25,7 +25,7 @@ Outputs:
        Returns 1 if the system fullfills the condition for a stable state
        Returns 0 if the condition was not met
 """
-function StableState(result::PowerGridSolution,nodesarray,variable,endtime, interval)
+function StableState(result::PowerGridSolution,nodesarray,variable,endtime)
         #=
         maxdeviation = maximum(result(0:endtime,node,:ω))
         if abs(maxdeviation) > threshold, (5)   # this could be used for Survivability later on...
@@ -125,8 +125,8 @@ Outputs:
     standarddev: Array of the standard deviations of the basin stability
 """
 function BasinStability(pg::PowerGrid, endtime::Int, variable::Symbol,
-                        numtries::Int, interval::Vector{Float64})
-    @assert interval[2] >= interval[1] "Upper bound should be bigger than lower bound!"
+                        numtries::Int, interval_v::Vector{Float64}, interval_θ::Vector{Float64})
+    @assert interval_v[2] >= interval_v[1] "Upper bound should be bigger than lower bound!"
     num_errors = 0
     operationpoint = find_operationpoint(pg)
     nodesarray = RemoveNodes(pg,variable)
@@ -142,19 +142,21 @@ function BasinStability(pg::PowerGrid, endtime::Int, variable::Symbol,
         # do some parralelization\ multithreading here to speed up calculation?
         for tries = 1:numtries
             println("NODE:",node," TRY:",tries)
-            PerturbedState, dz = RandPertWithConstrains(powergrid, operationpoint,node, interval, Q[node])
+            PerturbedState, dz = RandPertWithConstrains(powergrid, operationpoint,node, interval_v, interval_θ, Q[node])
             column_name = string(node) * string(tries)
             save(state_file, column_name, PerturbedState)
-
             λ, stable = check_eigenvalues(powergrid, PerturbedState)
+            #=
             if stable != true
                 println("Positive eigenvalue detected. The system might be unstable.")
                 try
                     result = sim(pg, PerturbedState, (0.0, endtime),true, rpg)
-                    display(plot_res(result, pg, node))
-                    fn = "node$(node)_try$(tries)"
-                    #png(fn)
                     stablecounter[tries] = StableState(result, nodesarray, variable, endtime, interval)
+                    if stablecounter[tries] == 0
+                        display(plot_res(result, pg, node))
+                        fn = "node$(node)_try$(tries)"
+                        png(fn)
+                    end
                 catch err
                     if isa(err, GridSolutionError)
                         stablecounter[tries] = 0 # counted as an unstable solution
@@ -162,10 +164,14 @@ function BasinStability(pg::PowerGrid, endtime::Int, variable::Symbol,
                     end
                 end
             else
-                result = sim(pg, PerturbedState, (0.0, endtime),true, rpg)
-                stablecounter[tries] = StableState(result,nodesarray,variable,endtime,interval)
+            =#
+            result = sim(pg, PerturbedState, (0.0, endtime),false, rpg)
+            stablecounter[tries] = StableState(result,nodesarray,variable,endtime)
+            if stablecounter[tries] == 0
+                display(plot_res(result, pg, node))
+                fn = "node$(node)_try$(tries)"
+                png(fn)
             end
-            #row = row +1
         end
         append!(basinstability, mean(stablecounter))
         append!(standarddev, std(stablecounter)) # is this even a useful measure here?

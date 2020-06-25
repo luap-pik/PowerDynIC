@@ -21,13 +21,13 @@ append!(node_list, [ThirdOrderEqGovernorIEEEGone(H = 5.0, D = 0.1, Ω = 50, E_f 
 
 powergrid = PowerGrid(node_list, line_list)
 
-operationpoint = find_operationpoint(powergrid)
+operationpoint = find_steady_state(powergrid)
 
 result = simulate(
-    Perturbation(4, :ω, Inc(0.1)),
+    Perturbation(4, :ω, Inc(10)),
     powergrid,
     operationpoint,
-    timespan = (0.0, 5),
+    timespan = (0.0, 28.0),
 )
 
 plot_res(result, powergrid, 4)

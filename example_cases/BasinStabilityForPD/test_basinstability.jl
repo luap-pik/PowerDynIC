@@ -4,8 +4,8 @@ include("pd_basin_stability.jl")
 #bsode, varode = BasinStability(powergrid,28,:ω,100, [-π,π], [-100.0,100.0], ProjectionMethod = "ODE")
 #bsoptim, varoptim = BasinStability(powergrid,28,:ω,100, [-π,π], [-100.0,100.0], ProjectionMethod = "Optim")
 
-bs, var = BasinStability(powergrid,28.0,:ω,1, [-π,π], [-100.0,100.0], ProjectionMethod = "Optim", dae = true)
-odebs, varode = BasinStability(powergrid,28,:ω,1, [-π,π], [-100.0,100.0], ProjectionMethod = "Optim")
+bs, var = BasinStability(powergrid,28.0,:ω,1, [-π,π], [-100.0,100.0], ProjectionMethod = "Optim")
+odebs, varode = BasinStability(powergrid,28,:ω,10, [-π,π], [-100.0,100.0], ProjectionMethod = "Optim")
 
 
 array = RemoveNodes(powergrid,:θ)

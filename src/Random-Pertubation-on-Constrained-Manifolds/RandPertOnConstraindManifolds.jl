@@ -1,11 +1,12 @@
 using PowerDynamics
 using ForwardDiff
-using Distributions:Uniform
+using Distributions
 import PowerDynamics:rhs
 using DifferentialEquations
 using LinearAlgebra
 using Optim
-#using DiffEqCallbacks
+
+include("../Random-Pertubation-on-Constrained-Manifolds/ModelingToolKitWrapper.jl")
 include("../PDpatches.jl")
 include("system.jl")
 include("PowerFlow.jl")
@@ -19,40 +20,37 @@ The system must still lie on this manifold after the random pertubation.
 This could be applied to Basin Stability Methods in the case of complexer
 Generator Methods which contain algebraic constraints.
 """
-function RandPertWithConstrains(pg::PowerGrid, operationpoint, node, interval_V, interval_θ,Q; ProjectionMethod = "Optim")
-    #Pi = pg.nodes[node].P # Power of the specific node
-    g(θ,i,u) = Q - 3 * i * exp(-1im * θ) * u * exp(-1im * θ) # Constraint, Power Flow Analysis
-    z = [operationpoint[node,:θ], operationpoint[node,:iabs],operationpoint[node,:v]]
+function RandPertWithConstrains(g::Function, symbol_list,z, op::State, node::Int,
+                                interval_V, interval_θ,
+                                dist::UnionAll; ProjectionMethod = "Optim",
+                                nsteps = 1)
 
-    #Jacg_imag = ForwardDiff.jacobian(x -> imag(g(x[1],x[2],x[3])), z)
-    #Jacg_real = ForwardDiff.jacobian(x -> real(g(x[1],x[2],x[3])), z)
+    Jacg,vars = jacobian_wrapper(g, symbol_list) # Getting the symbolic Jacobian
+    for steps in 1:nsteps
+        Frand = [rand(dist(interval_θ[1],interval_θ[2])), rand(dist(interval_V[1],interval_V[2]))]
 
-    #Jacg = Jacg_real + 1im .* Jacg_imag  # I could not find a package which is able to handle complex valued function
-    Jacg = ForwardDiff.gradient(x -> real(g(x[1],x[2],x[3])), z) .+ 1im .* ForwardDiff.gradient(x -> imag(g(x[1],x[2],x[3])), z)
+        Fstep = Frand / nsteps
 
-    kerJacg = nullspace(Matrix(Jacg')) # kernel of the Jacobian, returns orthogonal vectors
+        #Jacg = ForwardDiff.gradient(x -> real(g(x[1],x[2],x[3])), z) .+ 1im .* ForwardDiff.gradient(x -> imag(g(x[1],x[2],x[3])), z)
 
-    num_basis_vec = size(kerJacg,2)
+        Jacg_eval = transpose(insert_value(Jacg, vars, z))
 
-    Frand = [rand(Uniform(interval_θ[1],interval_θ[2])), rand(Uniform(interval_V[1],interval_V[2]))]
+        kerJacg = nullspace(Matrix(Jacg_eval')) # kernel of the Jacobian, returns orthogonal vectors
 
-    dz = kerJacg * Frand
-    
-    if ProjectionMethod == "Optim"
-        p_dash = ProjOptim(dz, g) # Calculates the projection onto M using Optim
+        dz = kerJacg * Fstep
 
-    elseif ProjectionMethod == "ODE"
-        p_dash = ProjODE(g, node, operationpoint,dz, Q)
+        if ProjectionMethod == "Optim"
+            z = ProjOptim(dz, g) # Calculates the projection onto M using Optim
 
-    else
-        ArgumentError("Please use either Optim or ODE as the ProjectionMethod.")
+        elseif ProjectionMethod == "ODE"
+            z = ProjODE(g, node, op, dz, Q)
+
+        else
+            ArgumentError("Please use either Optim or ODE as the ProjectionMethod.")
+        end
     end
 
-
-    PerturbedState = copy(operationpoint) # otherwise operationpoint is overwritten
-    PerturbedState[2,:θ] = abs(p_dash[1])
-    PerturbedState[2,:u] = p_dash[3]
-    return PerturbedState, p_dash
+    return z
 end
 
 """
@@ -67,6 +65,10 @@ Calculates the Projection from the Tangetial Room TzM to the the Manifold M by
 minimizing the function:
     f(x) = a * |dz-p''| + b * |g(p')|.
 Where g(p') is the Constraint at point p'.
+This function looks so weird because Optim does not support Complex Numbers so
+far. See here:
+https://stackoverflow.com/questions/61770030/comlex-valued-parameter-estimation-in-julia-using-differentialequations
+
 Inputs:
         dz: The calculated pertubation inside of TzM
         g: The constraint function
@@ -74,22 +76,39 @@ Inputs:
 Outputs:
         p_dash: Solution of the ODE problem, a Pertubation on M
 """
-function ProjOptim(dz, g::Function; a = 1.0, b = 100.0)
-    Proj(x) = a * norm(dz - [x[1] + 1im * x[2], x[3] + 1im * x[4], x[5] + 1im * x[6]]) +
-              b * abs(g(x[1] + 1im * x[2], x[3] + 1im * x[4], x[5] + 1im * x[6]))
+function ProjOptim(dz::Array{Complex64,1}, g::Function; a = 1.0, b = 100.0)
+    len_dz = length(dz)
 
-    x0 = [real(dz[1]), imag(dz[1]),
-          real(dz[2]), imag(dz[2]),
-          real(dz[3]), imag(dz[3])]
+    Proj(x) = b * abs(g((x[1:2:end] +  1im * x[2:2:end])...)) +
+              a * norm(dz - (x[1:2:end] +  1im * x[2:2:end]))
 
-    proj = optimize(Proj,x0)
+    x0 = Vector{Float64}(undef, 2 * len_dz)
+
+    x0[1:2:end] = real(dz[:])
+    x0[2:2:end] = imag(dz[:])
+
+    g((x0[1:2:end] + 1im * x0[2:2:end])...)
+
+    proj = optimize(Proj, x0)
 
     minimum = proj.minimizer
-    p_dash = [minimum[1] + 1im * minimum[2],
-              minimum[3] + 1im * minimum[4],
-              minimum[5] + 1im * minimum[6]]
+
+    p_dash = Vector{Float64}(undef, len_dz)
+
+    p_dash[:] = abs.(minimum[1:2:end] + 1im * minimum[2:2:end])
 
     return p_dash
+end
+
+function ProjOptim(dz::Array{Float64,1}, g::Function; a = 1.0, b = 100.0)
+    Proj(x) = b * abs(g(x...)) +
+              a * norm(dz - x)
+
+    proj = optimize(Proj, dz)
+
+    minimum = proj.minimizer
+
+    return minimum
 end
 
 """

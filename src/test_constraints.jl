@@ -24,7 +24,7 @@ L1 = LineReal(; from = 1, to = 2, Y = adm)
 L2 = LineReal(; from = 2, to = 3, Y = adm)
 S = SlackReal(; U = complex(1.)) # 1pu
 T = ThirdOrderReal(H = 5.0, P = 1.0, D = 0.1, Ω = 50, E_f = 1., X_d_dash = 0.111, T_d_dash = 0.1, X_q_dash = 0.103, X_d = 0.1)
-PQ = PQReal(; P = 0.5, Q=0.1)
+PQ = PQReal(; P = -0.5, Q=-0.1)
 
 ##
 
@@ -42,9 +42,15 @@ ode = ODEProblem(rpg, op.vec, (0., 10.))
 
 using ModelingToolkit
 
+# https://mtk.sciml.ai/stable/tutorials/modelingtoolkitize/
+
 mtk_sys = modelingtoolkitize(ode)
 
-jac = generate_jacobian(mtk_sys)
+jac = generate_jacobian(mtk_sys)[1]
+
+J = eval(jac)
+
+J(op.vec, nothing, 0.) |> eigvals
 
 
 

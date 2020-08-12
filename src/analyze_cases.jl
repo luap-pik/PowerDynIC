@@ -181,7 +181,7 @@ type_guesses = node_list .|> typeof .|> guess
 icm = vcat(type_guesses...) |> state
 
 # find PD operation point
-op_icm = find_operationpoint(powergrid; ic_guess=icm.vec, tol=1E-10)
+op_icm = find_operationpoint(powergrid; tol=1E-10)
 
 u0 = op_icm.vec
 du0 = similar(u0)

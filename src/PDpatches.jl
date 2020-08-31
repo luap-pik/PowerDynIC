@@ -41,7 +41,7 @@ end
 
 import PowerDynamics: find_operationpoint, State
 using NLsolve: nlsolve, converged
-
+#=
 function find_operationpoint(pg::PowerGrid; ic_guess = nothing, tol=1E-9)
     if SlackAlgebraic ∉ pg.nodes .|> typeof
         @warn "There is no slack bus in the system to balance powers. Currently not making any checks concerning assumptions of whether its possible to find the fixed point"
@@ -62,7 +62,7 @@ function find_operationpoint(pg::PowerGrid; ic_guess = nothing, tol=1E-9)
         throw(OperationPointError("Failed to find initial conditions on the constraint manifold!"))
     end
 end
-
+=#
 using ForwardDiff: jacobian
 using SparseArrays: sparse
 using LinearAlgebra: eigvals
@@ -91,7 +91,7 @@ function check_eigenvalues(pg::PowerGrid, s::State)
     return λ, stable
 end
 
-
+#=
 function find_operationpoint_sparse(pg::PowerGrid; ic_guess = nothing, tol=1E-9)
     if SlackAlgebraic ∉ pg.nodes .|> typeof
         @warn "There is no slack bus in the system to balance powers. Currently not making any checks concerning assumptions of whether its possible to find the fixed point"
@@ -125,7 +125,7 @@ function find_operationpoint_sparse(pg::PowerGrid; ic_guess = nothing, tol=1E-9)
         throw(OperationPointError("Failed to find initial conditions on the constraint manifold!"))
     end
 end
-
+=#
 using OrdinaryDiffEq: ODEFunction
 using NLsolve: nlsolve, converged
 using LinearAlgebra: pinv

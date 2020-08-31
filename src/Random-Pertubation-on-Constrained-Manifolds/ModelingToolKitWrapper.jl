@@ -19,9 +19,11 @@ function insert_value(Jg, vars, eval_values)
     for i in 1:num_vars
         subsitute_vec[i] = vars[i] => eval_values[i]
     end
-    Jg_eval = substitute.(Jg,(subsitute_vec,)) # Evaluates Jg at eval_values
-    Jg_eval = (p->p.value).(Jg_eval) # Removes the ModelingToolkit.Constant type
 
+    Jg_eval = substitute.(Jg,(subsitute_vec,)) # Evaluates Jg at eval_values
+    Jg_eval = (p->p.value).(Jg_eval)  # Removes the ModelingToolkit.Constant
+
+    Jg_eval = Float64.(Jg_eval) # Prevents that the Arry is of type Number
     return Jg_eval
 end
 
@@ -38,7 +40,7 @@ Outputs:
         Jg: Symbolic Jacobi Matrix
         vars: variables of the Jacobi Matrix Jg
 """
-function jacobian_wrapper(g::Function, symbol_list)
+function jacobian_wrapper(g, symbol_list)
     num_vars = length(symbol_list)
     vars = Vector{Operation}(undef, num_vars)
 
@@ -46,7 +48,12 @@ function jacobian_wrapper(g::Function, symbol_list)
         vars[k] = Variable(symbol_list[k])()
     end
 
-    g_expr = [g(vars...)] # Using function g as a generator for a expression
+    g_expr = g(vars...) # Using function g as a generator for an expression
+
+    if (isa(g_expr ,Array{Operation})) == false
+        g_expr = [g_expr] # ModelingToolkit needs an Array of Operations
+    end
+
     Jg = ModelingToolkit.jacobian(g_expr, vars)
     Jg = simplify.(Jg)
     return Jg, vars

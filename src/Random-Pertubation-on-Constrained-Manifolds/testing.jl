@@ -1,44 +1,40 @@
 include("../Random-Pertubation-on-Constrained-Manifolds/RandPertOnConstraindManifolds.jl")
 include("../../example_cases/BasinStabilityForPD/pd_basin_stability.jl")
-include("../../example_cases/BasinStabilityForPD/plotting.jl")
+include("system.jl")
 
 ###############################
 #            SET UP           #
 ###############################
 
-op = find_steady_state(powergrid)
-rpg = rhs(powergrid)
+op = find_operationpoint(powergrid; sol_method = :rootfind)
+pg = powergrid
 
-P, Q = SimplePowerFlow(powergrid, op)
+g_testing(u, resid) = constraint_equations(rhs(pg))
 
-ω_idx = findall(:ω .∈ symbolsof.(powergrid.nodes))
-θ_idx = findall(:θ .∈ symbolsof.(powergrid.nodes))
+cb = ManifoldProjection(g_testing);
+prob = ODEProblem(rhs(pg), x,(0.0, 20.0));
 
-throws = 1000
-node = 4
+sol = solve(prob, Rosenbrock23(), save = true,callback = cb)
+#state = PowerGridSolution(sol, pg)
+Plots.plot(sol)
 
-g(θ,i,u) = Q[node] - 3 * i * exp(-2im * θ) * u # Constraint, Power Flow Analysis
-z = [op[node,:θ], op[node,:iabs],op[node,:v]]
-symbol_list = [:θ, :i, :u]
+x = RandomWalkManifold(rhs(pg), op.vec, [-1.0,1.0], Uniform, nsteps = 1)
+PerturbedState = State(pg, x)
+PerturbedState[1,:v]
 
-##################################################
 
-dz = RandPertWithConstrains(g, symbol_list, z, op, node,[-π, π],[-100,100], Uniform)
+result = sim(pg, PerturbedState, (0.0,20.0), false, rhs(pg))
+plot_res(result, pg , 2)
 
-PerturbedState = copy(op)
-PerturbedState[node, :θ] = dz[1]
-PerturbedState[node, :v] = dz[3]
+x = AmbientForcing(rhs(pg), op.vec,[-1.5, 1.5], Uniform, 5, 2)
+PerturbedState = State(pg, x)
 
-#################################
-#         PLOTTING              #
-#################################
+for j in 1:6
+    for i in 1:5
+        x = AmbientForcing(rhs(pg), op.vec,[-1.5, 1.5], Uniform, 5, j)
+        PerturbedState = State(pg, x)
 
-result = sim(powergrid, PerturbedState, (0.0, 20.0), true, rpg)
-
-plot_res(result, powergrid, 3)
-
-plot(PowerGridSolution(result.dqsol, powergrid), θ_idx, :θ, legend = false)
-
-plot_distribution(g, symbol_list, z, op, Uniform, "Optim", node, throws)
-
-plot_distance(g, symbol_list, z, op, Uniform, "Optim", node, throws)
+        result = sim(pg, PerturbedState, (0.0,20.0), true, rhs(pg))
+        plot_res(result, pg, 1)
+    end
+end

@@ -1,38 +1,36 @@
-"""
-The Robertson Equations in DAE. Used to describe chemical rate equations.
-Taken from the DifferentialEquations.jl documentation.
-https://diffeq.sciml.ai/stable/tutorials/dae_example/
-"""
-function Robertson(out,du,u,p,t)
-  out[1] = - 0.04u[1]              + 1e4*u[2]*u[3] - du[1]
-  out[2] = + 0.04u[1] - 3e7*u[2]^2 - 1e4*u[2]*u[3] - du[2]
-  out[3] = u[1] + u[2] + u[3] - 1.0
+include("../Random-Pertubation-on-Constrained-Manifolds/RandPertOnConstraindManifolds.jl")
+include("../../example_cases/BasinStabilityForPD/plotting.jl")
+
+function rober(du,u,p,t)
+  y₁,y₂,y₃ = u
+  du[1] = -0.04 * y₁ + 1e4 * y₂ * y₃
+  du[2] =  0.04 * y₁ - 1e4 * y₂ * y₃ - 3e7 * y₂^2
+  du[3] =  y₁ + y₂ + y₃ - 1
+  nothing
 end
 
-u₀ = [1.0, 0, 0]
-du₀ = [-0.04, 0.04, 0.0]
-tspan = (0.0,100000.0)
+M = [1. 0  0
+     0  1. 0
+     0  0  0];
 
+ode_rober = ODEFunction(rober,mass_matrix=M);
+u0 = [1.0,0.0,0.0]
 
-diff_vars = [true,true,false]
-prob = DAEProblem(Robertson,du₀,u₀,tspan,differential_vars = diff_vars)
+x = AmbientForcing(ode_rober, u0, [-10,10], Uniform, 5)
 
-sol = solve(prob,IDA())
+#######################################################
+#        Drawing Random Inital Conditions             #
+###############################################
 
-plot(sol, xscale=:log10, tspan=(1e-6, 1e5), layout=(3,1))
-
-
-gRobertson(y1, y2, y3) = y1 + y2 + y3 - 1.0
-
-y1(y2,y3) = -y2 -y3 - 1.0
-node = 1
-
+y1(y2,y3) = -y2 -y3 + 1.0
 var_list = [:y1, :y2, :y3]
 
-dz = RandPertWithConstrains(gRobertson, var_list, u₀, op, node,[-10, 10],[-10,10], Uniform)
+###################################
+#            PLOTTING             #
+###################################
+scene =  distribution_Makie(ode_rober, y1, var_list, u0, [-100,100], Uniform, "RandomWalk", 5)
 
-extrem_y, extrem_z = plot_distribution(gRobertson, var_list, u₀, op, Uniform, "Optim", node)
+scene.center = false
+Makie.save("RobertsonRandomWalk.png", scene)
 
-test = [(y1(0,extrem_y[1]),0,extrem_y[1]), (y1(0,extrem_y[2]),0,extrem_y[2]),(y1(extrem_z[1],0),extrem_z[1],0), (y1(extrem_z[2],0),extrem_z[2],0)]
-
-surface!(test, c = :blues)
+display(scene)

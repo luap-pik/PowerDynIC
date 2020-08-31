@@ -38,6 +38,9 @@ import Base: @__doc__
     @assert X_d >= 0 "reactance of d-axis (X_d_dash) should be >=0"
     Ω_H = Ω / (2 * H)
 end [[θ,dθ],[ω, dω]] begin
+    #println("THIS IS ES:", e_s)
+    #println("THIS IS ED:", e_d)
+
     i_c = 1im * i * exp(-1im * θ)
     e_c = 1im * u * exp(-1im * θ)
     p = real(u * conj(i))

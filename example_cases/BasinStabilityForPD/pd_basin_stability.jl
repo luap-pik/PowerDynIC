@@ -1,16 +1,16 @@
 using PowerDynamics: simulate, Perturbation, Inc, PowerGrid
 using Distributions: Uniform
 using Sundials
-using Statistics
+#using Statistics
 using NetworkDynamics
 using LaTeXStrings
-using FileIO, JLD2
-using DelimitedFiles
+#using FileIO, JLD2
+#using DelimitedFiles
 
-include("../new node types/plotting.jl")
 include("../new node types/ThirdOrderEq.jl")
 include("../../src/Random-Pertubation-on-Constrained-Manifolds/RandPertOnConstraindManifolds.jl")
-include("../../src/PDpatches.jl")
+#include("../../src/PDpatches.jl")
+include("plotting.jl")
 
 """
 Evaluates the result of a simulation after a pertubation.
@@ -27,17 +27,12 @@ Outputs:
        Returns 1 if the system fullfills the condition for a stable state
        Returns 0 if the condition was not met
 """
-function StableState(result::PowerGridSolution,nodesarray,variable,endtime)
-        #=
-        maxdeviation = maximum(result(0:endtime,node,:ω))
-        if abs(maxdeviation) > threshold, (5)   # this could be used for Survivability later on...
-            return 0
-        end
-        =#
-    for node in  1:length(powergrid.nodes) # runs over all nodes
+function StableState(pg, result::PowerGridSolution,nodesarray,endtime)
+    ω_idx = findall(:ω.∈ symbolsof.(pg.nodes))
+    for node in  1:length(pg.nodes) # runs over all nodes
         summation = 0
         for time in endtime-10:0.1:endtime
-            if node in nodesarray  # checks only nodes which have ω as a symbol
+            if node in ω_idx  # checks only nodes which have ω as a symbol
                 summation =+ abs.(result(time,node,:ω))
             end
             if summation > 100  # checks if ω returns to 0
@@ -56,9 +51,9 @@ function sim(pg::PowerGrid, x0::State, timespan, force_dtmin::Bool, rpg)
     problem = ODEProblem(rpg,x0.vec,timespan)
     # sets the kwarg force_dtmin to avoid the dt < dtmin error
     if force_dtmin == true
-        solution = solve(problem, Rodas5(autodiff=false), abstol=1e-8,reltol=1e-6,tspan=Inf, force_dtmin = true)
+        solution = solve(problem, Rodas5(autodiff=true), force_dtmin = true)
     else
-        solution = solve(problem, Rodas5(autodiff=false), abstol=1e-8,reltol=1e-6,tspan=Inf)
+        solution = solve(problem, Rodas5(autodiff=false))
     end
     PowerGridSolution(solution, pg)
 end
@@ -80,6 +75,7 @@ function dae_sim(rpg_ode, tspan, x0::State,pg)
         return PowerGridSolution(sol,pg)
 end
 
+
 """
 Removes all nodes from the from the calculation procedure that do not contain
 variable as a symbol.
@@ -89,44 +85,18 @@ Inputs:
 Outputs:
     nodesarray: Array containg the index of all nodes with the symbol varibale
 """
-function RemoveNodes(pg::PowerGrid, variable::Symbol)
-    nodesarray = findall(variable.∈ symbolsof.(pg.nodes))
+function RemoveNodes(rpg, pg::PowerGrid)
+    constraint_idx = findall(0 .== [rpg.mass_matrix[i, i] for i in 1:systemsize(pg)])
+    nodesarray = []
+    for i in constraint_idx
+        symbol_str = string(rpg.syms[i])
+        num_idx = findlast(isequal('_'), symbol_str) + 1
+        node_num = parse(Int64, symbol_str[num_idx:end])
+        if (node_num in nodesarray) == false
+            append!(nodesarray, node_num)
+        end
+    end
     return nodesarray
-end
-
-"""
-Produces a plot of the calulated basin stability against the nodes index.
-Inputs:
-    nodesarray: Array containg the index of all nodes that contain varible
-    basinstability: Array containing the basin stability of each node
-    standarddev: Array of the standard deviations of the basin stability
-"""
-function PlotBasinStability(nodesarray, basinstability, standarddev; labtext = "Basin Stability")
-    plot(
-        nodesarray,
-        basinstability,
-        xlabel = "Node Index",
-        ylabel = "Basin Stability",
-        marker = (:circle, 8, "red"),
-        line = (:path, 2,"gray"),
-        label = labtext,
-        grid = false,
-        show = true
-    )
-end
-
-function PlotBasinStability!(nodesarray, basinstability, standarddev; labtext = "Basin Stability")
-    plot!(
-        nodesarray,
-        basinstability,
-        xlabel = "Node Index",
-        ylabel = "Basin Stability",
-        marker = (:circle, 8, "blue"),
-        line = (:path, 2,"gray"),
-        label = labtext,
-        grid = false,
-        show = true
-    )
 end
 
 
@@ -158,28 +128,30 @@ Outputs:
     basinstability: Array conating the basinstability of each node
     standarddev: Array of the standard deviations of the basin stability
 """
-function BasinStability(pg::PowerGrid, endtime::Int, variable::Symbol,
-                        numtries::Int, interval_v::Vector{Float64}, interval_θ::Vector{Float64};
-                        ProjectionMethod = "Optim")
-    @assert interval_v[2] >= interval_v[1] "Upper bound should be bigger than lower bound!"
+function BasinStability(pg::PowerGrid, endtime,
+                        numtries::Int, dist_args, dist::UnionAll;
+                        tau_max)
     num_errors = 0
-    operationpoint = find_steady_state(pg)
-    nodesarray = RemoveNodes(pg,variable)
-    basinstability = []
-    standarddev =  []
-    P, Q = SimplePowerFlow(pg, operationpoint)
+    op = find_operationpoint(pg; sol_method = :rootfind)
     rpg = rhs(pg)
 
-    state_file = File(format"JLD2","State_File.jld2")
-    save(state_file, "operationpoint", operationpoint)
+    nodesarray = RemoveNodes(rpg, pg)
+    basinstability = []
+    standarddev =  []
+
+    #state_file = File(format"JLD2","State_File.jld2")
+    #save(state_file, "operationpoint", op)
     for node in nodesarray
         stablecounter = Array{Int64}(undef,numtries)
-        # do some parralelization\ multithreading here to speed up calculation?
+
         for tries = 1:numtries
             println("NODE:",node," TRY:",tries)
-            PerturbedState, dz = RandPertWithConstrains(powergrid, operationpoint,node, interval_v, interval_θ, Q[node], ProjectionMethod = ProjectionMethod)
-            column_name = string(node) * string(tries)
-            save(state_file, column_name, PerturbedState)
+            z_new = AmbientForcing(rpg, op.vec, dist_args, dist, tau_max, node)
+
+            PerturbedState = State(pg, z_new)
+
+            #column_name = string(node) * string(tries)
+            #save(state_file, column_name, PerturbedState)
             λ, stable = check_eigenvalues(powergrid, PerturbedState)
             #=
             if stable != true
@@ -200,52 +172,12 @@ function BasinStability(pg::PowerGrid, endtime::Int, variable::Symbol,
                 end
             else
             =#
-            result = sim(pg, PerturbedState, (0.0, endtime),false, rpg)
-            stablecounter[tries] = StableState(result,nodesarray,variable,endtime)
+            result = sim(pg, PerturbedState, (0.0, endtime), true, rpg)
+            stablecounter[tries] = StableState(pg, result, nodesarray, endtime)
             #if stablecounter[tries] == 0
             display(plot_res(result, pg, node))
-                #fn = "node$(node)_try$(tries)"
-                #png(fn)
-            #end
-        end
-        append!(basinstability, mean(stablecounter))
-        append!(standarddev, std(stablecounter)) # is this even a useful measure here?
-    end
-    println("Percentage of failed Simualtions:  ",100 * num_errors/(numtries * length(nodesarray)))
-    display(PlotBasinStability(nodesarray, basinstability, standarddev))
-    png("BasinStability_Plot")
-    writedlm("bs.txt", basinstability)
-    return basinstability, standarddev
-end
-
-
-function BasinStability(pg::PowerGrid, endtime::Float64, variable::Symbol,
-                        numtries::Int, interval_v::Vector{Float64}, interval_θ::Vector{Float64};
-                        ProjectionMethod = "Optim",
-                        dae)
-    @assert interval_v[2] >= interval_v[1] "Upper bound should be bigger than lower bound!"
-    num_errors = 0
-    operationpoint = find_steady_state(pg)
-    nodesarray = RemoveNodes(pg,variable)
-    basinstability = []
-    standarddev =  []
-    P, Q = SimplePowerFlow(pg, operationpoint)
-    rpg = rhs(pg)
-    state_file = File(format"JLD2","State_File.jld2")
-    save(state_file, "operationpoint", operationpoint)
-    for node in nodesarray
-        stablecounter = Array{Int64}(undef,numtries)
-        # do some parralelization\ multithreading here to speed up calculation?
-        for tries = 1:numtries
-            println("NODE:",node," TRY:",tries)
-            PerturbedState, dz = RandPertWithConstrains(powergrid, operationpoint,node, interval_v, interval_θ, Q[node], ProjectionMethod = ProjectionMethod)
-            column_name = string(node) * string(tries)
-            save(state_file, column_name, PerturbedState)
-            result = dae_sim(rpg, (0.0, endtime), PerturbedState,pg)
-            stablecounter[tries] = StableState(result,nodesarray,variable,endtime)
-            display(plot_res(result, pg, node))
             fn = "node$(node)_try$(tries)"
-            png(fn)
+            png("/home/anna/Documents/MASTER_ARBEIT/random stuff/"*fn)
         end
         append!(basinstability, mean(stablecounter))
         append!(standarddev, std(stablecounter)) # is this even a useful measure here?
@@ -253,6 +185,6 @@ function BasinStability(pg::PowerGrid, endtime::Float64, variable::Symbol,
     println("Percentage of failed Simualtions:  ",100 * num_errors/(numtries * length(nodesarray)))
     display(PlotBasinStability(nodesarray, basinstability, standarddev))
     png("BasinStability_Plot")
-    writedlm("bs.txt", basinstability)
+    #writedlm("bs.txt", basinstability)
     return basinstability, standarddev
 end
